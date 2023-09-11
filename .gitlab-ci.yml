@@ -1,0 +1,78 @@
+stages:
+  - version
+  - build-release
+  - deploy
+#.basic_script_for_testing: &basic_script_for_testing |-
+#  sh integration_test/test_api_service.sh "https://docker/check_api_service_status" 300 5
+.before_all_scripts: &before_all_scripts |-
+  source .variables
+variables:
+  # Tell docker CLI how to talk to Docker daemon; see
+  # https://docs.gitlab.com/ee/ci/docker/using_docker_build.html#use-docker-in-docker-executor
+  DOCKER_HOST: tcp://docker:2376/
+generate-env-vars:
+  image: gitlab.officience.com:4567/container-images/alpine:3.12.1
+  tags:
+    - build
+  stage: version
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "testing"'
+  script:
+    - apk add git
+    - TAG="anvest-be"
+    - BRANCH=$(echo $CI_BUILD_REF_NAME | sed -E 's/[^a-zA-Z0-9_-]//g')
+    - echo "export TAG=$TAG" > .variables
+    - echo "export BRANCH=$BRANCH" > .variables
+    #- echo "export DJG_DEV_ENV_IMAGE=$CI_REGISTRY_IMAGE:$TAG-djg-dev" >> .variables
+    - echo "export DJG_DEV_ENV_LATEST_IMAGE=$CI_REGISTRY_IMAGE:dev-latest" >> .variables
+
+  retry:
+    max: 2
+    when:
+      - always
+  artifacts:
+    paths:
+      - .variables
+build-release-dev-images:
+  image: gitlab.officience.com:4567/container-images/docker:19.03.14-with-docker-compose-git-curl
+  services:
+    - name: gitlab.officience.com:4567/container-images/docker:19.03.14-dind
+      alias: docker
+  stage: build-release
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+  retry:
+    max: 2
+    when:
+      - always
+  tags:
+    - docker
+  script:
+    - *before_all_scripts
+    - ls -l
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -f Dockerfile -t ${DJG_DEV_ENV_LATEST_IMAGE} .
+    - docker push ${DJG_DEV_ENV_LATEST_IMAGE}
+  dependencies:
+    - generate-env-vars
+
+deploy-developed-environment:
+  image: gitlab.officience.com:4567/container-images/docker:19.03.14-with-docker-compose-git-curl
+  services:
+    - name: gitlab.officience.com:4567/container-images/docker:19.03.14-dind
+      alias: docker
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev"'
+  retry:
+    max: 2
+    when:
+      - always
+  tags:
+    - docker
+  script:
+    - *before_all_scripts
+    - curl -X POST $WEBHOOK_DEPLOY_DJG_DEVELOPMENT
+  dependencies:
+    - generate-env-vars
+    - build-release-dev-images

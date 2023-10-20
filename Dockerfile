@@ -16,5 +16,5 @@ WORKDIR /fincision_be
 
 COPY requirements.txt /fincision_be/
 RUN pip install -r requirements.txt
-COPY . /fincision_be/
+COPY . /app/
 
